@@ -92,13 +92,26 @@ let g:loaded_plug = 1
 let s:cpo_save = &cpo
 set cpo&vim
 
-let s:plug_src = 'https://github.com/junegunn/vim-plug.git'
+let s:plug_src = 'https://github.com/Meuhor/vim-plug.git'
 let s:plug_tab = get(s:, 'plug_tab', -1)
 let s:plug_buf = get(s:, 'plug_buf', -1)
 let s:mac_gui = has('gui_macvim') && has('gui_running')
 let s:is_win = has('win32')
 let s:nvim = has('nvim-0.2') || (has('nvim') && exists('*jobwait') && !s:is_win)
 let s:vim8 = has('patch-8.0.0039') && exists('*job_start')
+
+if s:is_win
+    let s:git_exec = g:plug_git_exec
+else
+    leg s:git_exec = git
+endif
+
+let s:git_src = 'github'
+let s:git_com = 'https://'.s:git_src.'.com'
+let s:git_com_r = '^https://git::@github\.com'
+let s:git_mirror ='https://git::@'.s:git_src.'.com/%s.git' 
+
+
 if s:is_win && &shellslash
   set noshellslash
   let s:me = resolve(expand('<sfile>:p'))
@@ -200,7 +213,7 @@ function! s:git_origin_branch(spec)
   endif
 
   " The command may not return the name of a branch in detached HEAD state
-  let result = s:lines(s:system('git symbolic-ref --short HEAD', a:spec.dir))
+  let result = s:lines(s:system(s:git_exec.' symbolic-ref --short HEAD', a:spec.dir))
   return v:shell_error ? '' : result[-1]
 endfunction
 
@@ -264,7 +277,7 @@ endfunction
 
 function! s:define_commands()
   command! -nargs=+ -bar Plug call plug#(<args>)
-  if !executable('git')
+  if !executable(s:git_exec)
     return s:err('`git` executable not found. Most commands will not be available. To suppress this message, prepend `silent!` to `call plug#begin(...)`.')
   endif
   if has('win32')
@@ -352,7 +365,7 @@ function! plug#end()
   endif
   let lod = { 'ft': {}, 'map': {}, 'cmd': {} }
 
-  if get(g:, 'did_load_filetypes', 0)
+  if exists('g:did_load_filetypes')
     filetype off
   endif
   for name in g:plugs_order
@@ -462,7 +475,7 @@ endfunction
 
 function! s:git_version_requirement(...)
   if !exists('s:git_version')
-    let s:git_version = map(split(split(s:system(['git', '--version']))[2], '\.'), 'str2nr(v:val)')
+    let s:git_version = map(split(split(s:system([s:git_exec, '--version']))[2], '\.'), 'str2nr(v:val)')
   endif
   return s:version_requirement(s:git_version, a:000)
 endfunction
@@ -775,7 +788,7 @@ function! s:infer_properties(name, repo)
       if repo !~ '/'
         throw printf('Invalid argument: %s (implicit `vim-scripts'' expansion is deprecated)', repo)
       endif
-      let fmt = get(g:, 'plug_url_format', 'https://git::@github.com/%s.git')
+      let fmt = get(g:, 'plug_url_format', s:git_mirror)
       let uri = printf(fmt, repo)
     endif
     return { 'dir': s:dirpath(g:plug_home.'/'.a:name), 'uri': uri }
@@ -1027,7 +1040,7 @@ function! s:regress_bar()
 endfunction
 
 function! s:is_updated(dir)
-  return !empty(s:system_chomp(['git', 'log', '--pretty=format:%h', 'HEAD...HEAD@{1}'], a:dir))
+  return !empty(s:system_chomp([s:git_exec, 'log', '--pretty=format:%h', 'HEAD...HEAD@{1}'], a:dir))
 endfunction
 
 function! s:do(pull, force, todo)
@@ -1095,7 +1108,7 @@ function! s:checkout(spec)
   if !empty(output) && !s:hash_match(sha, s:lines(output)[0])
     let credential_helper = s:git_version_requirement(2) ? '-c credential.helper= ' : ''
     let output = s:system(
-          \ 'git '.credential_helper.'fetch --depth 999999 && git checkout '.plug#shellescape(sha).' --', a:spec.dir)
+          \ s:git_exec.' '.credential_helper.'fetch --depth 999999 && '.git_exec.' checkout '.plug#shellescape(sha).' --', a:spec.dir)
   endif
   return output
 endfunction
@@ -1171,7 +1184,7 @@ function! s:update_impl(pull, force, args) abort
     let $GIT_TERMINAL_PROMPT = 0
     for plug in values(todo)
       let plug.uri = substitute(plug.uri,
-            \ '^https://git::@github\.com', 'https://github.com', '')
+            \ s:git_com_r, s:git_com, '')
     endfor
   endif
 
@@ -1298,7 +1311,7 @@ function! s:update_finish()
       elseif has_key(spec, 'tag')
         let tag = spec.tag
         if tag =~ '\*'
-          let tags = s:lines(s:system('git tag --list '.plug#shellescape(tag).' --sort -version:refname 2>&1', spec.dir))
+          let tags = s:lines(s:system(s:git_exec.' tag --list '.plug#shellescape(tag).' --sort -version:refname 2>&1', spec.dir))
           if !v:shell_error && !empty(tags)
             let tag = tags[0]
             call s:log4(name, printf('Latest tag for %s -> %s', spec.tag, tag))
@@ -1306,17 +1319,17 @@ function! s:update_finish()
           endif
         endif
         call s:log4(name, 'Checking out '.tag)
-        let out = s:system('git checkout -q '.plug#shellescape(tag).' -- 2>&1', spec.dir)
+        let out = s:system(s:git_exec.' checkout -q '.plug#shellescape(tag).' -- 2>&1', spec.dir)
       else
         let branch = s:git_origin_branch(spec)
         call s:log4(name, 'Merging origin/'.s:esc(branch))
-        let out = s:system('git checkout -q '.plug#shellescape(branch).' -- 2>&1'
-              \. (has_key(s:update.new, name) ? '' : ('&& git merge --ff-only '.plug#shellescape('origin/'.branch).' 2>&1')), spec.dir)
+        let out = s:system(s:git_exec.' checkout -q '.plug#shellescape(branch).' -- 2>&1'
+              \. (has_key(s:update.new, name) ? '' : ('&& '.s:git_exec.' merge --ff-only '.plug#shellescape('origin/'.branch).' 2>&1')), spec.dir)
       endif
       if !v:shell_error && filereadable(spec.dir.'/.gitmodules') &&
             \ (s:update.force || has_key(s:update.new, name) || s:is_updated(spec.dir))
         call s:log4(name, 'Updating submodules. This may take a while.')
-        let out .= s:bang('git submodule update --init --recursive'.s:submodule_opt.' 2>&1', spec.dir)
+        let out .= s:bang(s:git_exec.' submodule update --init --recursive'.s:submodule_opt.' 2>&1', spec.dir)
       endif
       let msg = s:format_message(v:shell_error ? 'x': '-', name, out)
       if v:shell_error
@@ -1548,7 +1561,7 @@ while 1 " Without TCO, Vim stack is bound to explode
     let [error, _] = s:git_validate(spec, 0)
     if empty(error)
       if pull
-        let cmd = s:git_version_requirement(2) ? ['git', '-c', 'credential.helper=', 'fetch'] : ['git', 'fetch']
+        let cmd = s:git_version_requirement(2) ? [s:git_exec, '-c', 'credential.helper=', 'fetch'] : [s:git_exec, 'fetch']
         if has_tag && !empty(globpath(spec.dir, '.git/shallow'))
           call extend(cmd, ['--depth', '99999999'])
         endif
@@ -1563,7 +1576,7 @@ while 1 " Without TCO, Vim stack is bound to explode
       let s:jobs[name] = { 'running': 0, 'lines': s:lines(error), 'error': 1 }
     endif
   else
-    let cmd = ['git', 'clone']
+    let cmd = [s:git_exec, 'clone']
     if !has_tag
       call extend(cmd, s:clone_opt)
     endif
@@ -1834,7 +1847,7 @@ class Plugin(object):
 
     self.write(Action.INSTALL, self.name, ['Installing ...'])
     callback = functools.partial(self.write, Action.INSTALL, self.name)
-    cmd = 'git clone {0} {1} {2} {3} 2>&1'.format(
+    cmd = s:git_exec.' clone {0} {1} {2} {3} 2>&1'.format(
           '' if self.tag else G_CLONE_OPT, G_PROGRESS, self.args['uri'],
           esc(target))
     com = Command(cmd, None, G_TIMEOUT, callback, clean(target))
@@ -1842,7 +1855,7 @@ class Plugin(object):
     self.write(Action.DONE, self.name, result[-1:])
 
   def repo_uri(self):
-    cmd = 'git rev-parse --abbrev-ref HEAD 2>&1 && git config -f .git/config remote.origin.url'
+    cmd = s:git_exec.' rev-parse --abbrev-ref HEAD 2>&1 && '.s:git_exec.' config -f .git/config remote.origin.url'
     command = Command(cmd, self.args['dir'], G_TIMEOUT,)
     result = command.execute(G_RETRIES)
     return result[-1]
@@ -1864,7 +1877,7 @@ class Plugin(object):
       self.write(Action.UPDATE, self.name, ['Updating ...'])
       callback = functools.partial(self.write, Action.UPDATE, self.name)
       fetch_opt = '--depth 99999999' if self.tag and os.path.isfile(os.path.join(self.args['dir'], '.git/shallow')) else ''
-      cmd = 'git fetch {0} {1} 2>&1'.format(fetch_opt, G_PROGRESS)
+      cmd = s:git_exec.' fetch {0} {1} 2>&1'.format(fetch_opt, G_PROGRESS)
       com = Command(cmd, self.args['dir'], G_TIMEOUT, callback)
       result = com.execute(G_RETRIES)
       self.write(Action.DONE, self.name, result[-1:])
@@ -2156,7 +2169,7 @@ function! s:update_ruby()
           ok, result =
             if exists
               chdir = "#{cd} #{iswin ? dir : esc(dir)}"
-              ret, data = bt.call "#{chdir} && git rev-parse --abbrev-ref HEAD 2>&1 && git config -f .git/config remote.origin.url", nil, nil, nil
+              ret, data = bt.call "#{chdir} && ".s:gitexecutable." rev-parse --abbrev-ref HEAD 2>&1 && ".s:git_exec." config -f .git/config remote.origin.url", nil, nil, nil
               current_uri = data.lines.to_a.last
               if !ret
                 if data =~ /^Interrupted|^Timeout/
@@ -2172,7 +2185,7 @@ function! s:update_ruby()
                 if pull
                   log.call name, 'Updating ...', :update
                   fetch_opt = (tag && File.exist?(File.join(dir, '.git/shallow'))) ? '--depth 99999999' : ''
-                  bt.call "#{chdir} && git fetch #{fetch_opt} #{progress} 2>&1", name, :update, nil
+                  bt.call "#{chdir} && ".s:git_exec." fetch #{fetch_opt} #{progress} 2>&1", name, :update, nil
                 else
                   [true, skip]
                 end
@@ -2180,7 +2193,7 @@ function! s:update_ruby()
             else
               d = esc dir.sub(%r{[\\/]+$}, '')
               log.call name, 'Installing ...', :install
-              bt.call "git clone #{clone_opt unless tag} #{progress} #{uri} #{d} 2>&1", name, :install, proc {
+              bt.call s:git_exec." clone #{clone_opt unless tag} #{progress} #{uri} #{d} 2>&1", name, :install, proc {
                 FileUtils.rm_rf dir
               }
             end
@@ -2335,7 +2348,7 @@ function! s:git_validate(spec, check_branch)
       " Check tag
       let origin_branch = s:git_origin_branch(a:spec)
       if has_key(a:spec, 'tag')
-        let tag = s:system_chomp('git describe --exact-match --tags HEAD 2>&1', a:spec.dir)
+        let tag = s:system_chomp(s:git_exec.' describe --exact-match --tags HEAD 2>&1', a:spec.dir)
         if a:spec.tag !=# tag && a:spec.tag !~ '\*'
           let err = printf('Invalid tag: %s (expected: %s). Try PlugUpdate.',
                 \ (empty(tag) ? 'N/A' : tag), a:spec.tag)
@@ -2347,7 +2360,7 @@ function! s:git_validate(spec, check_branch)
       endif
       if empty(err)
         let [ahead, behind] = split(s:lastline(s:system([
-        \ 'git', 'rev-list', '--count', '--left-right',
+        \ s:git_exec, 'rev-list', '--count', '--left-right',
         \ printf('HEAD...origin/%s', origin_branch)
         \ ], a:spec.dir)), '\t')
         if !v:shell_error && ahead
@@ -2496,7 +2509,7 @@ function! s:upgrade()
   let new = tmp . '/plug.vim'
 
   try
-    let out = s:system(['git', 'clone', '--depth', '1', s:plug_src, tmp])
+    let out = s:system([s:git_exec, 'clone', '--depth', '1', s:plug_src, tmp])
     if v:shell_error
       return s:err('Error upgrading vim-plug: '. out)
     endif
@@ -2621,34 +2634,26 @@ function! s:preview_commit()
 
   let sha = matchstr(getline('.'), '^  \X*\zs[0-9a-f]\{7,9}')
   if empty(sha)
-    let name = matchstr(getline('.'), '^- \zs[^:]*\ze:$')
-    if empty(name)
-      return
-    endif
-    let title = 'HEAD@{1}..'
-    let command = 'git diff --no-color HEAD@{1}'
-  else
-    let title = sha
-    let command = 'git show --no-color --pretty=medium '.sha
-    let name = s:find_name(line('.'))
+    return
   endif
 
+  let name = s:find_name(line('.'))
   if empty(name) || !has_key(g:plugs, name) || !isdirectory(g:plugs[name].dir)
     return
   endif
 
   if exists('g:plug_pwindow') && !s:is_preview_window_open()
     execute g:plug_pwindow
-    execute 'e' title
+    execute 'e' sha
   else
-    execute 'pedit' title
+    execute 'pedit' sha
     wincmd P
   endif
-  setlocal previewwindow filetype=git buftype=nofile bufhidden=wipe nobuflisted modifiable
+  setlocal previewwindow filetype=git buftype=nofile nobuflisted modifiable
   let batchfile = ''
   try
     let [sh, shellcmdflag, shrd] = s:chsh(1)
-    let cmd = 'cd '.plug#shellescape(g:plugs[name].dir).' && '.command
+    let cmd = 'cd '.plug#shellescape(g:plugs[name].dir).' && '.s:git_exec.' show --no-color --pretty=medium '.sha
     if s:is_win
       let [batchfile, cmd] = s:batchfile(cmd)
     endif
@@ -2701,7 +2706,7 @@ function! s:diff()
       let branch = s:git_origin_branch(v)
       if len(branch)
         let range = origin ? '..origin/'.branch : 'HEAD@{1}..'
-        let cmd = ['git', 'log', '--graph', '--color=never']
+        let cmd = [s:git_exec, 'log', '--graph', '--color=never']
         if s:git_version_requirement(2, 10, 0)
           call add(cmd, '--no-show-signature')
         endif
@@ -2756,7 +2761,7 @@ function! s:revert()
     return
   endif
 
-  call s:system('git reset --hard HEAD@{1} && git checkout '.plug#shellescape(g:plugs[name].branch).' --', g:plugs[name].dir)
+  call s:system(s:git_exec.' reset --hard HEAD@{1} && '.git_exec.' checkout '.plug#shellescape(g:plugs[name].branch).' --', g:plugs[name].dir)
   setlocal modifiable
   normal! "_dap
   setlocal nomodifiable
@@ -2774,9 +2779,9 @@ function! s:snapshot(force, ...) abort
   1
   let anchor = line('$') - 3
   let names = sort(keys(filter(copy(g:plugs),
-        \'has_key(v:val, "uri") && isdirectory(v:val.dir)')))
+        \'has_key(v:val, "uri") && !has_key(v:val, "commit") && isdirectory(v:val.dir)')))
   for name in reverse(names)
-    let sha = has_key(g:plugs[name], 'commit') ? g:plugs[name].commit : s:git_revision(g:plugs[name].dir)
+    let sha = s:git_revision(g:plugs[name].dir)
     if !empty(sha)
       call append(anchor, printf("silent! let g:plugs['%s'].commit = '%s'", name, sha))
       redraw
